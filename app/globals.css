@@ -1,26 +1,186 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #f6f1e7;
+  --ink: #1c2a39;
+  --ink-soft: #4a5a6a;
+  --panel: rgba(255, 255, 255, 0.84);
+  --line: rgba(28, 42, 57, 0.2);
+  --accent: #d95d39;
+  --accent-2: #1f7a8c;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  color: var(--ink);
+  font-family: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(217, 93, 57, 0.16), transparent 35%),
+    radial-gradient(circle at 85% 0%, rgba(31, 122, 140, 0.15), transparent 40%),
+    var(--bg);
+}
+
+.page-shell {
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.hero {
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.74));
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 1.25rem;
+}
+
+.kicker {
+  margin: 0 0 0.4rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+
+.hero h1 {
+  margin: 0 0 0.4rem;
+  font-size: clamp(1.4rem, 3vw, 2.3rem);
+}
+
+.hero p {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.panel {
+  backdrop-filter: blur(8px);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 1rem;
+}
+
+.form-grid {
+  display: grid;
+  gap: 0.8rem;
+}
+
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+textarea {
+  min-height: 110px;
+}
+
+.toggle {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+button {
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), #c22d3f);
+  color: #fff;
+  font-weight: 700;
+  padding: 0.65rem 0.9rem;
+  cursor: pointer;
+}
+
+button[disabled] {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.alert {
+  background: #ffe6e0;
+  border: 1px solid #f2b0a1;
+  color: #7f220f;
+  border-radius: 10px;
+  padding: 0.7rem;
+}
+
+.output h3 {
+  margin: 1rem 0 0.5rem;
+}
+
+.row {
+  margin: 0.25rem 0;
+}
+
+ul {
+  margin: 0.3rem 0 0.6rem;
+  padding-left: 1.2rem;
+}
+
+pre {
+  white-space: pre-wrap;
+  font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+  background: #17212b;
+  color: #d7e2ef;
+  padding: 0.8rem;
+  border-radius: 10px;
+  overflow: auto;
+}
+
+.decision {
+  margin-top: 0.8rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.8rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.actions button:first-child {
+  background: linear-gradient(135deg, #607d8b, #455a64);
+}
+
+a {
+  color: #0f5f7a;
+}
+
+.error-text {
+  color: #8a2222;
+  font-weight: 600;
+}
+
+@media (max-width: 700px) {
+  .page-shell {
+    padding: 1rem 0.8rem 2.2rem;
+  }
 }
