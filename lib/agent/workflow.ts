@@ -5,6 +5,7 @@ import { buildGroundingChecklist } from "./tools/grounding";
 import { generateText, parseJsonObject } from "./clients/gemini";
 import { loadLlmInstructionBundle } from "./instructions";
 import { runTestsAndCollectCoverage } from "./tools/testRunner";
+import { buildCompilationErrorAnalysis, isCompilationFailure } from "./analysis/compilationError";
 import { createMergeRequest } from "./tools/gitlab";
 import {
   buildBranchName,
@@ -25,6 +26,7 @@ import type {
   FinalizeResult,
   TestExecutionReport,
   TrackerTask,
+  CompilationErrorAnalysis,
 } from "./types";
 
 const MAX_EDIT_ATTEMPTS = 2;
@@ -42,6 +44,7 @@ type WorkflowState = {
   stagedEdits?: DraftEdit[];
   diffPreview?: string;
   testReport?: TestExecutionReport;
+  compilationErrorAnalysis?: CompilationErrorAnalysis;
 };
 
 const graphState = Annotation.Root({
@@ -55,6 +58,7 @@ const graphState = Annotation.Root({
   stagedEdits: Annotation<DraftEdit[] | undefined>,
   diffPreview: Annotation<string | undefined>,
   testReport: Annotation<TestExecutionReport | undefined>,
+  compilationErrorAnalysis: Annotation<CompilationErrorAnalysis | undefined>,
 });
 
 const graph = new StateGraph(graphState)
@@ -116,7 +120,11 @@ const graph = new StateGraph(graphState)
       repo: state.repo,
       edits: stagedEdits,
     });
-    return { stagedEdits, diffPreview, testReport };
+    const compilationErrorAnalysis = isCompilationFailure(testReport)
+      ? await buildCompilationErrorAnalysis({ report: testReport, repo: state.repo })
+      : undefined;
+
+    return { stagedEdits, diffPreview, testReport, compilationErrorAnalysis };
   })
   .addEdge(START, "loadTask")
   .addEdge("loadTask", "scanRepo")
@@ -148,6 +156,7 @@ export async function startAgentRun(input: AgentRunInput): Promise<AgentRunRecor
       stagedEdits: result.stagedEdits,
       diffPreview: result.diffPreview,
       testReport: result.testReport,
+      compilationErrorAnalysis: result.compilationErrorAnalysis,
     });
     return record;
   } catch (error) {

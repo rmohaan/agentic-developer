@@ -40,6 +40,13 @@ type AgentRunRecord = {
       lineCoveragePercent: number | null;
     }>;
   };
+  compilationErrorAnalysis?: {
+    detected: boolean;
+    summary: string;
+    rootCause: string;
+    potentialSolutions: string[];
+    followUpChecks: string[];
+  };
 };
 
 type DiffRow = {
@@ -289,6 +296,30 @@ export default function Home() {
                 <>
                   <h3>Test stderr</h3>
                   <pre>{run.testReport.stderrSnippet}</pre>
+                </>
+              ) : null}
+
+              {run.compilationErrorAnalysis?.detected ? (
+                <>
+                  <h3>Compilation Error Deep Dive</h3>
+                  <div className="error-analysis">
+                    <p><strong>Summary:</strong> {run.compilationErrorAnalysis.summary}</p>
+                    <p><strong>Root Cause:</strong> {run.compilationErrorAnalysis.rootCause}</p>
+
+                    <p><strong>Potential Solutions:</strong></p>
+                    <ul>
+                      {run.compilationErrorAnalysis.potentialSolutions.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+
+                    <p><strong>Follow-up Checks:</strong></p>
+                    <ul>
+                      {run.compilationErrorAnalysis.followUpChecks.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </>
               ) : null}
             </>

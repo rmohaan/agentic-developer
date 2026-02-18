@@ -68,6 +68,14 @@ export type TestExecutionReport = {
   stderrSnippet?: string;
 };
 
+export type CompilationErrorAnalysis = {
+  detected: boolean;
+  summary: string;
+  rootCause: string;
+  potentialSolutions: string[];
+  followUpChecks: string[];
+};
+
 export type AgentRunRecord = {
   runId: string;
   createdAt: string;
@@ -80,6 +88,7 @@ export type AgentRunRecord = {
   branchName?: string;
   diffPreview?: string;
   testReport?: TestExecutionReport;
+  compilationErrorAnalysis?: CompilationErrorAnalysis;
   feedbackHistory: string[];
   finalSummary?: string;
   mergeRequestUrl?: string;
