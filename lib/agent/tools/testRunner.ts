@@ -7,6 +7,18 @@ import { readFileIfExists, writeFile } from "./repo";
 
 const execAsync = promisify(exec);
 
+type CoverageAggregate = {
+  coveredLines: number;
+  totalLines: number;
+};
+
+type TestStrategy = {
+  command: string;
+  reportRelativePath: string;
+  parser: "lcov" | "go-coverprofile" | "cobertura-xml" | "jacoco-xml";
+  notes?: string[];
+};
+
 export async function runTestsAndCollectCoverage(params: {
   repoPath: string;
   repo: RepoSnapshot;
@@ -21,7 +33,7 @@ export async function runTestsAndCollectCoverage(params: {
       fileCoverage: [],
       notes: [
         "No supported coverage strategy detected.",
-        "Currently implemented: JavaScript/TypeScript Node.js repositories with lcov output.",
+        "Supported strategies: JS/TS (lcov), Python pytest-cov XML, Go coverprofile, Java JaCoCo XML.",
       ],
     };
   }
@@ -38,14 +50,12 @@ export async function runTestsAndCollectCoverage(params: {
 
     const result = await execAsync(strategy.command, {
       cwd: params.repoPath,
-      timeout: 10 * 60 * 1000,
-      maxBuffer: 10 * 1024 * 1024,
+      timeout: 15 * 60 * 1000,
+      maxBuffer: 15 * 1024 * 1024,
     });
 
-    const coverageByFile = await parseLcovFile(path.join(params.repoPath, strategy.lcovRelativePath), params.repoPath);
-    const changedCoverage = params.edits
-      .map((edit) => toCoverageEntry(edit.path, coverageByFile.get(normalizePath(edit.path))))
-      .filter((item) => item !== null);
+    const coverageByFile = await parseCoverageReport(strategy, params.repoPath);
+    const changedCoverage = mapCoverageToChangedFiles(params.edits, coverageByFile);
 
     return {
       executed: true,
@@ -53,15 +63,13 @@ export async function runTestsAndCollectCoverage(params: {
       command: strategy.command,
       overallLineCoveragePercent: computeOverallCoverage(changedCoverage),
       fileCoverage: changedCoverage,
-      notes: ["Tests executed successfully with coverage."],
+      notes: [...(strategy.notes ?? []), "Tests executed successfully with coverage."],
       stdoutSnippet: truncate(result.stdout ?? "", 4000),
       stderrSnippet: truncate(result.stderr ?? "", 2000),
     };
   } catch (error) {
-    const coverageByFile = await parseLcovFile(path.join(params.repoPath, strategy.lcovRelativePath), params.repoPath);
-    const changedCoverage = params.edits
-      .map((edit) => toCoverageEntry(edit.path, coverageByFile.get(normalizePath(edit.path))))
-      .filter((item) => item !== null);
+    const coverageByFile = await parseCoverageReport(strategy, params.repoPath);
+    const changedCoverage = mapCoverageToChangedFiles(params.edits, coverageByFile);
 
     const stdout = error instanceof Error && "stdout" in error ? String((error as { stdout?: string }).stdout ?? "") : "";
     const stderr = error instanceof Error && "stderr" in error ? String((error as { stderr?: string }).stderr ?? "") : "";
@@ -72,7 +80,7 @@ export async function runTestsAndCollectCoverage(params: {
       command: strategy.command,
       overallLineCoveragePercent: computeOverallCoverage(changedCoverage),
       fileCoverage: changedCoverage,
-      notes: ["Tests failed. Review stderr/stdout before approval."],
+      notes: [...(strategy.notes ?? []), "Tests failed. Review stderr/stdout before approval."],
       stdoutSnippet: truncate(stdout, 4000),
       stderrSnippet: truncate(stderr, 4000),
     };
@@ -87,12 +95,31 @@ export async function runTestsAndCollectCoverage(params: {
   }
 }
 
-type TestStrategy = {
-  command: string;
-  lcovRelativePath: string;
-};
-
 async function resolveTestStrategy(repoPath: string, repo: RepoSnapshot): Promise<TestStrategy | null> {
+  const nodeStrategy = await resolveNodeStrategy(repoPath, repo);
+  if (nodeStrategy) {
+    return nodeStrategy;
+  }
+
+  const pythonStrategy = await resolvePythonStrategy(repoPath, repo);
+  if (pythonStrategy) {
+    return pythonStrategy;
+  }
+
+  const goStrategy = await resolveGoStrategy(repoPath, repo);
+  if (goStrategy) {
+    return goStrategy;
+  }
+
+  const javaStrategy = await resolveJavaStrategy(repoPath, repo);
+  if (javaStrategy) {
+    return javaStrategy;
+  }
+
+  return null;
+}
+
+async function resolveNodeStrategy(repoPath: string, repo: RepoSnapshot): Promise<TestStrategy | null> {
   const hasNode = Boolean(repo.languageSummary.TypeScript || repo.languageSummary.JavaScript);
   if (!hasNode) {
     return null;
@@ -110,13 +137,83 @@ async function resolveTestStrategy(repoPath: string, repo: RepoSnapshot): Promis
   const manager = await detectPackageManager(repoPath);
 
   if (scripts["test:coverage"]) {
-    return { command: `${manager} run test:coverage`, lcovRelativePath: "coverage/lcov.info" };
+    return { command: `${manager} run test:coverage`, reportRelativePath: "coverage/lcov.info", parser: "lcov" };
   }
   if (scripts.coverage) {
-    return { command: `${manager} run coverage`, lcovRelativePath: "coverage/lcov.info" };
+    return { command: `${manager} run coverage`, reportRelativePath: "coverage/lcov.info", parser: "lcov" };
   }
   if (scripts.test) {
-    return { command: `${manager} run test -- --coverage`, lcovRelativePath: "coverage/lcov.info" };
+    return { command: `${manager} run test -- --coverage`, reportRelativePath: "coverage/lcov.info", parser: "lcov" };
+  }
+
+  return null;
+}
+
+async function resolvePythonStrategy(repoPath: string, repo: RepoSnapshot): Promise<TestStrategy | null> {
+  const hasPython = Boolean(repo.languageSummary.Python);
+  const looksLikePythonRepo =
+    hasPython ||
+    (await exists(path.join(repoPath, "pyproject.toml"))) ||
+    (await exists(path.join(repoPath, "requirements.txt")));
+
+  if (!looksLikePythonRepo) {
+    return null;
+  }
+
+  return {
+    command: "pytest --cov=. --cov-report=xml:coverage.xml",
+    reportRelativePath: "coverage.xml",
+    parser: "cobertura-xml",
+    notes: ["Python coverage expects pytest + pytest-cov to be installed."],
+  };
+}
+
+async function resolveGoStrategy(repoPath: string, repo: RepoSnapshot): Promise<TestStrategy | null> {
+  const hasGo = Boolean(repo.languageSummary.Go) || (await exists(path.join(repoPath, "go.mod")));
+  if (!hasGo) {
+    return null;
+  }
+
+  return {
+    command: "go test ./... -covermode=count -coverprofile=coverage.out",
+    reportRelativePath: "coverage.out",
+    parser: "go-coverprofile",
+  };
+}
+
+async function resolveJavaStrategy(repoPath: string, repo: RepoSnapshot): Promise<TestStrategy | null> {
+  const hasJava = Boolean(repo.languageSummary.Java || repo.languageSummary.Kotlin);
+  const hasMaven = (await exists(path.join(repoPath, "pom.xml"))) || (await exists(path.join(repoPath, "mvnw")));
+  if (hasJava && hasMaven) {
+    const maven = process.platform === "win32"
+      ? ((await exists(path.join(repoPath, "mvnw.cmd"))) ? "mvnw.cmd" : "mvn")
+      : ((await exists(path.join(repoPath, "mvnw"))) ? "./mvnw" : "mvn");
+
+    return {
+      command: `${maven} test jacoco:report`,
+      reportRelativePath: "target/site/jacoco/jacoco.xml",
+      parser: "jacoco-xml",
+      notes: ["Java coverage expects JaCoCo plugin/report to be available in the build."],
+    };
+  }
+
+  const hasGradle =
+    (await exists(path.join(repoPath, "build.gradle"))) ||
+    (await exists(path.join(repoPath, "build.gradle.kts"))) ||
+    (await exists(path.join(repoPath, "gradlew"))) ||
+    (await exists(path.join(repoPath, "gradlew.bat")));
+
+  if (hasJava && hasGradle) {
+    const gradle = process.platform === "win32"
+      ? ((await exists(path.join(repoPath, "gradlew.bat"))) ? "gradlew.bat" : "gradle")
+      : ((await exists(path.join(repoPath, "gradlew"))) ? "./gradlew" : "gradle");
+
+    return {
+      command: `${gradle} test jacocoTestReport`,
+      reportRelativePath: "build/reports/jacoco/test/jacocoTestReport.xml",
+      parser: "jacoco-xml",
+      notes: ["Java coverage expects JaCoCo plugin/report task in Gradle build."],
+    };
   }
 
   return null;
@@ -143,10 +240,23 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-type CoverageAggregate = {
-  coveredLines: number;
-  totalLines: number;
-};
+async function parseCoverageReport(strategy: TestStrategy, repoPath: string): Promise<Map<string, CoverageAggregate>> {
+  const reportPath = path.join(repoPath, strategy.reportRelativePath);
+  if (strategy.parser === "lcov") {
+    return parseLcovFile(reportPath, repoPath);
+  }
+  if (strategy.parser === "go-coverprofile") {
+    return parseGoCoverProfile(reportPath, repoPath);
+  }
+  if (strategy.parser === "cobertura-xml") {
+    return parseCoberturaXml(reportPath, repoPath);
+  }
+  return parseJaCoCoXml(reportPath, repoPath);
+}
+
+function mapCoverageToChangedFiles(edits: DraftEdit[], coverageByFile: Map<string, CoverageAggregate>) {
+  return edits.map((edit) => toCoverageEntry(edit.path, coverageByFile.get(normalizePath(edit.path))));
+}
 
 async function parseLcovFile(filePath: string, repoPath: string): Promise<Map<string, CoverageAggregate>> {
   const map = new Map<string, CoverageAggregate>();
@@ -201,9 +311,139 @@ async function parseLcovFile(filePath: string, repoPath: string): Promise<Map<st
   return map;
 }
 
+async function parseGoCoverProfile(filePath: string, repoPath: string): Promise<Map<string, CoverageAggregate>> {
+  const map = new Map<string, CoverageAggregate>();
+  let raw = "";
+  try {
+    raw = await fs.readFile(filePath, "utf8");
+  } catch {
+    return map;
+  }
+
+  const lines = raw.split("\n");
+  for (const line of lines) {
+    if (!line || line.startsWith("mode:")) {
+      continue;
+    }
+
+    const match = /^(.*):(\d+)\.(\d+),(\d+)\.(\d+)\s+(\d+)\s+(\d+)$/.exec(line.trim());
+    if (!match) {
+      continue;
+    }
+
+    const fileRef = normalizeGoPath(match[1], repoPath);
+    const numStmt = Number.parseInt(match[6], 10);
+    const count = Number.parseInt(match[7], 10);
+
+    const existing = map.get(fileRef) ?? { coveredLines: 0, totalLines: 0 };
+    existing.totalLines += numStmt;
+    if (count > 0) {
+      existing.coveredLines += numStmt;
+    }
+    map.set(fileRef, existing);
+  }
+
+  return map;
+}
+
+async function parseCoberturaXml(filePath: string, repoPath: string): Promise<Map<string, CoverageAggregate>> {
+  const map = new Map<string, CoverageAggregate>();
+  let raw = "";
+  try {
+    raw = await fs.readFile(filePath, "utf8");
+  } catch {
+    return map;
+  }
+
+  const classRegex = /<class\b[^>]*filename="([^"]+)"[^>]*>([\s\S]*?)<\/class>/g;
+  let classMatch: RegExpExecArray | null;
+  while ((classMatch = classRegex.exec(raw)) !== null) {
+    const filename = normalizeCoberturaPath(classMatch[1], repoPath);
+    const body = classMatch[2] ?? "";
+
+    const lineRegex = /<line\b[^>]*hits="(\d+)"[^>]*\/?>(?:<\/line>)?/g;
+    let lineMatch: RegExpExecArray | null;
+    let total = 0;
+    let covered = 0;
+
+    while ((lineMatch = lineRegex.exec(body)) !== null) {
+      total += 1;
+      const hits = Number.parseInt(lineMatch[1], 10);
+      if (hits > 0) {
+        covered += 1;
+      }
+    }
+
+    const existing = map.get(filename) ?? { coveredLines: 0, totalLines: 0 };
+    existing.coveredLines += covered;
+    existing.totalLines += total;
+    map.set(filename, existing);
+  }
+
+  return map;
+}
+
+async function parseJaCoCoXml(filePath: string, repoPath: string): Promise<Map<string, CoverageAggregate>> {
+  const map = new Map<string, CoverageAggregate>();
+  let raw = "";
+  try {
+    raw = await fs.readFile(filePath, "utf8");
+  } catch {
+    return map;
+  }
+
+  const packageRegex = /<package\b[^>]*name="([^"]*)"[^>]*>([\s\S]*?)<\/package>/g;
+  let packageMatch: RegExpExecArray | null;
+
+  while ((packageMatch = packageRegex.exec(raw)) !== null) {
+    const packageName = packageMatch[1] ?? "";
+    const packageBody = packageMatch[2] ?? "";
+
+    const sourceRegex = /<sourcefile\b[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/sourcefile>/g;
+    let sourceMatch: RegExpExecArray | null;
+
+    while ((sourceMatch = sourceRegex.exec(packageBody)) !== null) {
+      const sourceName = sourceMatch[1] ?? "";
+      const sourceBody = sourceMatch[2] ?? "";
+
+      const counterMatch = /<counter\b[^>]*type="LINE"[^>]*missed="(\d+)"[^>]*covered="(\d+)"[^>]*\/>/.exec(sourceBody);
+      if (!counterMatch) {
+        continue;
+      }
+
+      const missed = Number.parseInt(counterMatch[1], 10);
+      const covered = Number.parseInt(counterMatch[2], 10);
+      const total = missed + covered;
+
+      const combined = packageName.length > 0 ? `${packageName}/${sourceName}` : sourceName;
+      const normalized = normalizePath(combined);
+      const relative = normalizePath(path.relative(repoPath, path.resolve(repoPath, normalized)));
+      map.set(relative, { coveredLines: covered, totalLines: total });
+    }
+  }
+
+  return map;
+}
+
 function normalizeLcovPath(filePath: string, repoPath: string): string {
   const absolute = path.isAbsolute(filePath) ? filePath : path.resolve(repoPath, filePath);
   return normalizePath(path.relative(repoPath, absolute));
+}
+
+function normalizeGoPath(filePath: string, repoPath: string): string {
+  const cleaned = normalizePath(filePath);
+  if (path.isAbsolute(cleaned)) {
+    return normalizePath(path.relative(repoPath, cleaned));
+  }
+  return cleaned;
+}
+
+function normalizeCoberturaPath(filePath: string, repoPath: string): string {
+  const normalized = normalizePath(filePath);
+  if (path.isAbsolute(normalized)) {
+    return normalizePath(path.relative(repoPath, normalized));
+  }
+  return normalized;
 }
 
 function normalizePath(value: string): string {
