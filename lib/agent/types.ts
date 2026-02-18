@@ -60,6 +60,7 @@ export type TestExecutionReport = {
   executed: boolean;
   success: boolean;
   command?: string;
+  failureCause?: string;
   overallLineCoveragePercent: number | null;
   fileCoverage: FileCoverage[];
   notes: string[];

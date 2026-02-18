@@ -28,6 +28,7 @@ type AgentRunRecord = {
     executed: boolean;
     success: boolean;
     command?: string;
+    failureCause?: string;
     overallLineCoveragePercent: number | null;
     notes: string[];
     stdoutSnippet?: string;
@@ -248,6 +249,11 @@ export default function Home() {
                 {run.testReport.command ? (
                   <div>
                     <strong>Command:</strong> <code>{run.testReport.command}</code>
+                  </div>
+                ) : null}
+                {!run.testReport.success && run.testReport.failureCause ? (
+                  <div>
+                    <strong>Failure Cause:</strong> {run.testReport.failureCause}
                   </div>
                 ) : null}
               </div>

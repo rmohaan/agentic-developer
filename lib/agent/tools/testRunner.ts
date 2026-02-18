@@ -73,6 +73,7 @@ export async function runTestsAndCollectCoverage(params: {
       executed: true,
       success: true,
       command: strategy.command,
+      failureCause: undefined,
       overallLineCoveragePercent: computeOverallCoverage(changedCoverage),
       fileCoverage: changedCoverage,
       notes,
@@ -86,11 +87,14 @@ export async function runTestsAndCollectCoverage(params: {
     const stdout = error instanceof Error && "stdout" in error ? String((error as { stdout?: string }).stdout ?? "") : "";
     const stderr = error instanceof Error && "stderr" in error ? String((error as { stderr?: string }).stderr ?? "") : "";
     const diagnosis = diagnoseFailure(strategy, stdout, stderr);
+    const primaryLine = extractPrimaryFailureLine(stderr) ?? extractPrimaryFailureLine(stdout);
+    const failureCause = primaryLine ? `${diagnosis} | ${primaryLine}` : diagnosis;
 
     return {
       executed: true,
       success: false,
       command: strategy.command,
+      failureCause,
       overallLineCoveragePercent: computeOverallCoverage(changedCoverage),
       fileCoverage: changedCoverage,
       notes: [...(strategy.notes ?? []), diagnosis, "Tests failed. Review stderr/stdout before approval."],
@@ -616,4 +620,26 @@ function truncate(value: string, max: number): string {
     return value;
   }
   return `${value.slice(0, max)}\n...<truncated>`;
+}
+
+function extractPrimaryFailureLine(text: string): string | null {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    if (
+      lower.includes("[error]") ||
+      lower.includes("error") ||
+      lower.includes("exception") ||
+      lower.includes("failed") ||
+      lower.includes("failure")
+    ) {
+      return line.slice(0, 400);
+    }
+  }
+
+  return lines.length > 0 ? lines[0].slice(0, 400) : null;
 }
