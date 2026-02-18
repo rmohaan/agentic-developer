@@ -34,27 +34,25 @@ export async function generateText(prompt: string, useFastModel = false): Promis
 }
 
 export function parseJsonObject<T>(raw: string): T {
-  const jsonText = extractBalancedJsonObject(raw);
+  const normalized = stripCodeFences(raw).trim();
+  const jsonText = extractBalancedJsonValue(normalized);
   if (!jsonText) {
-    throw new Error("Model response did not contain JSON object");
+    throw new Error(`Model response did not contain JSON object. Preview: ${normalized.slice(0, 240)}`);
   }
 
-  try {
-    return JSON.parse(jsonText) as T;
-  } catch {
-    try {
-      const repaired = repairInvalidStringEscapes(jsonText);
-      return JSON.parse(repaired) as T;
-    } catch {
-      try {
-        const repaired = sanitizeControlCharsInStrings(repairInvalidStringEscapes(jsonText));
-        return JSON.parse(repaired) as T;
-      } catch {
-        const repaired = jsonrepair(jsonText);
-        return JSON.parse(repaired) as T;
-      }
+  const parsed = parseJsonLenient(jsonText);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as T;
+  }
+
+  if (Array.isArray(parsed)) {
+    const firstObject = parsed.find((item) => item && typeof item === "object" && !Array.isArray(item));
+    if (firstObject) {
+      return firstObject as T;
     }
   }
+
+  throw new Error(`Model response JSON was not an object. Preview: ${jsonText.slice(0, 240)}`);
 }
 
 function repairInvalidStringEscapes(input: string): string {
@@ -106,8 +104,57 @@ function repairInvalidStringEscapes(input: string): string {
   return output;
 }
 
-function extractBalancedJsonObject(raw: string): string | null {
-  const start = raw.indexOf("{");
+function stripCodeFences(raw: string): string {
+  return raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+}
+
+function parseJsonLenient(jsonText: string): unknown {
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    try {
+      const repaired = repairInvalidStringEscapes(jsonText);
+      return JSON.parse(repaired);
+    } catch {
+      try {
+        const repaired = sanitizeControlCharsInStrings(repairInvalidStringEscapes(jsonText));
+        return JSON.parse(repaired);
+      } catch {
+        const repaired = jsonrepair(jsonText);
+        return JSON.parse(repaired);
+      }
+    }
+  }
+}
+
+function extractBalancedJsonValue(raw: string): string | null {
+  const braceStart = raw.indexOf("{");
+  const bracketStart = raw.indexOf("[");
+
+  let start = -1;
+  let openChar = "{";
+  let closeChar = "}";
+
+  if (braceStart >= 0 && bracketStart >= 0) {
+    if (braceStart < bracketStart) {
+      start = braceStart;
+      openChar = "{";
+      closeChar = "}";
+    } else {
+      start = bracketStart;
+      openChar = "[";
+      closeChar = "]";
+    }
+  } else if (braceStart >= 0) {
+    start = braceStart;
+    openChar = "{";
+    closeChar = "}";
+  } else if (bracketStart >= 0) {
+    start = bracketStart;
+    openChar = "[";
+    closeChar = "]";
+  }
+
   if (start < 0) {
     return null;
   }
@@ -139,12 +186,12 @@ function extractBalancedJsonObject(raw: string): string | null {
       continue;
     }
 
-    if (char === "{") {
+    if (char === openChar) {
       depth += 1;
       continue;
     }
 
-    if (char === "}") {
+    if (char === closeChar) {
       depth -= 1;
       if (depth === 0) {
         return raw.slice(start, index + 1);
