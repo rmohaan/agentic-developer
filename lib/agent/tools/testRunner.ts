@@ -15,8 +15,9 @@ type CoverageAggregate = {
 type TestStrategy = {
   command: string;
   reportRelativePath: string;
-  parser: "lcov" | "go-coverprofile" | "cobertura-xml" | "jacoco-xml";
+  parser: "lcov" | "go-coverprofile" | "cobertura-xml" | "jacoco-xml" | "none";
   notes?: string[];
+  stack: "node" | "python" | "go" | "java";
 };
 
 export async function runTestsAndCollectCoverage(params: {
@@ -56,6 +57,17 @@ export async function runTestsAndCollectCoverage(params: {
 
     const coverageByFile = await parseCoverageReport(strategy, params.repoPath);
     const changedCoverage = mapCoverageToChangedFiles(params.edits, coverageByFile);
+    const reportPath = path.join(params.repoPath, strategy.reportRelativePath);
+    const hasCoverageReport = strategy.parser === "none" ? false : await exists(reportPath);
+
+    const notes = [...(strategy.notes ?? [])];
+    if (strategy.parser === "none") {
+      notes.push("Tests ran successfully, but coverage report is unavailable for this configuration.");
+    } else if (!hasCoverageReport) {
+      notes.push(`Coverage report was not found at ${strategy.reportRelativePath}. Check build configuration/report path.`);
+    } else {
+      notes.push("Tests executed successfully with coverage.");
+    }
 
     return {
       executed: true,
@@ -63,7 +75,7 @@ export async function runTestsAndCollectCoverage(params: {
       command: strategy.command,
       overallLineCoveragePercent: computeOverallCoverage(changedCoverage),
       fileCoverage: changedCoverage,
-      notes: [...(strategy.notes ?? []), "Tests executed successfully with coverage."],
+      notes,
       stdoutSnippet: truncate(result.stdout ?? "", 4000),
       stderrSnippet: truncate(result.stderr ?? "", 2000),
     };
@@ -73,6 +85,7 @@ export async function runTestsAndCollectCoverage(params: {
 
     const stdout = error instanceof Error && "stdout" in error ? String((error as { stdout?: string }).stdout ?? "") : "";
     const stderr = error instanceof Error && "stderr" in error ? String((error as { stderr?: string }).stderr ?? "") : "";
+    const diagnosis = diagnoseFailure(strategy, stdout, stderr);
 
     return {
       executed: true,
@@ -80,7 +93,7 @@ export async function runTestsAndCollectCoverage(params: {
       command: strategy.command,
       overallLineCoveragePercent: computeOverallCoverage(changedCoverage),
       fileCoverage: changedCoverage,
-      notes: [...(strategy.notes ?? []), "Tests failed. Review stderr/stdout before approval."],
+      notes: [...(strategy.notes ?? []), diagnosis, "Tests failed. Review stderr/stdout before approval."],
       stdoutSnippet: truncate(stdout, 4000),
       stderrSnippet: truncate(stderr, 4000),
     };
@@ -137,13 +150,28 @@ async function resolveNodeStrategy(repoPath: string, repo: RepoSnapshot): Promis
   const manager = await detectPackageManager(repoPath);
 
   if (scripts["test:coverage"]) {
-    return { command: `${manager} run test:coverage`, reportRelativePath: "coverage/lcov.info", parser: "lcov" };
+    return {
+      command: `${manager} run test:coverage`,
+      reportRelativePath: "coverage/lcov.info",
+      parser: "lcov",
+      stack: "node",
+    };
   }
   if (scripts.coverage) {
-    return { command: `${manager} run coverage`, reportRelativePath: "coverage/lcov.info", parser: "lcov" };
+    return {
+      command: `${manager} run coverage`,
+      reportRelativePath: "coverage/lcov.info",
+      parser: "lcov",
+      stack: "node",
+    };
   }
   if (scripts.test) {
-    return { command: `${manager} run test -- --coverage`, reportRelativePath: "coverage/lcov.info", parser: "lcov" };
+    return {
+      command: `${manager} run test -- --coverage`,
+      reportRelativePath: "coverage/lcov.info",
+      parser: "lcov",
+      stack: "node",
+    };
   }
 
   return null;
@@ -164,6 +192,7 @@ async function resolvePythonStrategy(repoPath: string, repo: RepoSnapshot): Prom
     command: "pytest --cov=. --cov-report=xml:coverage.xml",
     reportRelativePath: "coverage.xml",
     parser: "cobertura-xml",
+    stack: "python",
     notes: ["Python coverage expects pytest + pytest-cov to be installed."],
   };
 }
@@ -178,22 +207,42 @@ async function resolveGoStrategy(repoPath: string, repo: RepoSnapshot): Promise<
     command: "go test ./... -covermode=count -coverprofile=coverage.out",
     reportRelativePath: "coverage.out",
     parser: "go-coverprofile",
+    stack: "go",
   };
 }
 
 async function resolveJavaStrategy(repoPath: string, repo: RepoSnapshot): Promise<TestStrategy | null> {
   const hasJava = Boolean(repo.languageSummary.Java || repo.languageSummary.Kotlin);
+  if (!hasJava) {
+    return null;
+  }
+
   const hasMaven = (await exists(path.join(repoPath, "pom.xml"))) || (await exists(path.join(repoPath, "mvnw")));
-  if (hasJava && hasMaven) {
+  if (hasMaven) {
     const maven = process.platform === "win32"
       ? ((await exists(path.join(repoPath, "mvnw.cmd"))) ? "mvnw.cmd" : "mvn")
       : ((await exists(path.join(repoPath, "mvnw"))) ? "./mvnw" : "mvn");
 
+    const hasJaCoCo = await hasJaCoCoInMavenPom(repoPath);
+    if (hasJaCoCo) {
+      return {
+        command: `${maven} test jacoco:report`,
+        reportRelativePath: "target/site/jacoco/jacoco.xml",
+        parser: "jacoco-xml",
+        stack: "java",
+        notes: ["Java Maven mode with JaCoCo report enabled."],
+      };
+    }
+
     return {
-      command: `${maven} test jacoco:report`,
+      command: `${maven} test`,
       reportRelativePath: "target/site/jacoco/jacoco.xml",
-      parser: "jacoco-xml",
-      notes: ["Java coverage expects JaCoCo plugin/report to be available in the build."],
+      parser: "none",
+      stack: "java",
+      notes: [
+        "JaCoCo plugin not detected in pom.xml. Running tests without coverage.",
+        "Add jacoco-maven-plugin to enable coverage numbers.",
+      ],
     };
   }
 
@@ -203,16 +252,31 @@ async function resolveJavaStrategy(repoPath: string, repo: RepoSnapshot): Promis
     (await exists(path.join(repoPath, "gradlew"))) ||
     (await exists(path.join(repoPath, "gradlew.bat")));
 
-  if (hasJava && hasGradle) {
+  if (hasGradle) {
     const gradle = process.platform === "win32"
       ? ((await exists(path.join(repoPath, "gradlew.bat"))) ? "gradlew.bat" : "gradle")
       : ((await exists(path.join(repoPath, "gradlew"))) ? "./gradlew" : "gradle");
 
+    const hasJaCoCo = await hasJaCoCoInGradleBuild(repoPath);
+    if (hasJaCoCo) {
+      return {
+        command: `${gradle} test jacocoTestReport`,
+        reportRelativePath: "build/reports/jacoco/test/jacocoTestReport.xml",
+        parser: "jacoco-xml",
+        stack: "java",
+        notes: ["Java Gradle mode with JaCoCo report task enabled."],
+      };
+    }
+
     return {
-      command: `${gradle} test jacocoTestReport`,
+      command: `${gradle} test`,
       reportRelativePath: "build/reports/jacoco/test/jacocoTestReport.xml",
-      parser: "jacoco-xml",
-      notes: ["Java coverage expects JaCoCo plugin/report task in Gradle build."],
+      parser: "none",
+      stack: "java",
+      notes: [
+        "JaCoCo plugin/task not detected in Gradle build. Running tests without coverage.",
+        "Apply JaCoCo plugin and jacocoTestReport task to enable coverage numbers.",
+      ],
     };
   }
 
@@ -242,6 +306,9 @@ async function exists(filePath: string): Promise<boolean> {
 
 async function parseCoverageReport(strategy: TestStrategy, repoPath: string): Promise<Map<string, CoverageAggregate>> {
   const reportPath = path.join(repoPath, strategy.reportRelativePath);
+  if (strategy.parser === "none") {
+    return new Map<string, CoverageAggregate>();
+  }
   if (strategy.parser === "lcov") {
     return parseLcovFile(reportPath, repoPath);
   }
@@ -423,6 +490,72 @@ async function parseJaCoCoXml(filePath: string, repoPath: string): Promise<Map<s
   }
 
   return map;
+}
+
+async function hasJaCoCoInMavenPom(repoPath: string): Promise<boolean> {
+  const pomPath = path.join(repoPath, "pom.xml");
+  try {
+    const raw = await fs.readFile(pomPath, "utf8");
+    return raw.includes("jacoco-maven-plugin");
+  } catch {
+    return false;
+  }
+}
+
+async function hasJaCoCoInGradleBuild(repoPath: string): Promise<boolean> {
+  const candidates = [
+    path.join(repoPath, "build.gradle"),
+    path.join(repoPath, "build.gradle.kts"),
+  ];
+
+  for (const filePath of candidates) {
+    try {
+      const raw = await fs.readFile(filePath, "utf8");
+      if (raw.includes("jacoco") || raw.includes("jacocoTestReport")) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return false;
+}
+
+function diagnoseFailure(strategy: TestStrategy, stdout: string, stderr: string): string {
+  const merged = `${stdout}\n${stderr}`.toLowerCase();
+
+  if (strategy.stack === "java") {
+    if (merged.includes("no plugin found for prefix 'jacoco'")) {
+      return "JaCoCo Maven plugin is not configured. Add jacoco-maven-plugin in pom.xml to generate coverage.";
+    }
+    if (merged.includes("unknown lifecycle phase") && merged.includes("jacoco")) {
+      return "Maven does not recognize jacoco goal/phase. Verify JaCoCo plugin setup and goal usage.";
+    }
+    if (merged.includes("there are test failures") || merged.includes("tests run:")) {
+      return "Unit tests failed. Fix tests before coverage report can be trusted.";
+    }
+    if (merged.includes("invalid target release") || merged.includes("release version") || merged.includes("unsupportedclassversionerror")) {
+      return "Java toolchain/version mismatch detected. Verify JDK and build configuration.";
+    }
+  }
+
+  if (strategy.stack === "python") {
+    if (merged.includes("no module named pytest")) {
+      return "pytest is not installed in the environment.";
+    }
+    if (merged.includes("unrecognized arguments: --cov")) {
+      return "pytest-cov is not installed (or not loaded). Install pytest-cov for coverage.";
+    }
+  }
+
+  if (strategy.stack === "go") {
+    if (merged.includes("go: command not found")) {
+      return "Go toolchain is not available in PATH.";
+    }
+  }
+
+  return "Test command failed. Check stderr for exact failure cause.";
 }
 
 function normalizeLcovPath(filePath: string, repoPath: string): string {
