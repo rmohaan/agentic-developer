@@ -41,8 +41,13 @@ export function parseJsonObject<T>(raw: string): T {
   try {
     return JSON.parse(jsonText) as T;
   } catch {
-    const repaired = repairInvalidStringEscapes(jsonText);
-    return JSON.parse(repaired) as T;
+    try {
+      const repaired = repairInvalidStringEscapes(jsonText);
+      return JSON.parse(repaired) as T;
+    } catch {
+      const repaired = sanitizeControlCharsInStrings(repairInvalidStringEscapes(jsonText));
+      return JSON.parse(repaired) as T;
+    }
   }
 }
 
@@ -142,4 +147,51 @@ function extractBalancedJsonObject(raw: string): string | null {
   }
 
   return null;
+}
+
+function sanitizeControlCharsInStrings(input: string): string {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const code = char.charCodeAt(0);
+
+    if (!inString) {
+      output += char;
+      if (char === "\"") {
+        inString = true;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      output += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      output += char;
+      escaped = true;
+      continue;
+    }
+
+    if (char === "\"") {
+      output += char;
+      inString = false;
+      continue;
+    }
+
+    // JSON does not allow raw control chars (U+0000 to U+001F) in string literals.
+    if (code >= 0x00 && code <= 0x1f) {
+      output += `\\u${code.toString(16).padStart(4, "0")}`;
+      continue;
+    }
+
+    output += char;
+  }
+
+  return output;
 }
