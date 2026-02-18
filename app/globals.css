@@ -161,6 +161,77 @@ pre {
   padding-top: 0.8rem;
 }
 
+.diff-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.diff-file {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.diff-file-header {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  background: rgba(31, 122, 140, 0.08);
+}
+
+.diff-grid {
+  overflow: auto;
+}
+
+.diff-row {
+  display: grid;
+  grid-template-columns: 52px minmax(260px, 1fr) 52px minmax(260px, 1fr);
+  border-bottom: 1px solid rgba(28, 42, 57, 0.08);
+}
+
+.diff-row:last-child {
+  border-bottom: 0;
+}
+
+.diff-line-no {
+  padding: 0.35rem 0.45rem;
+  text-align: right;
+  color: #6c7882;
+  border-right: 1px solid rgba(28, 42, 57, 0.12);
+  font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.8rem;
+}
+
+.diff-row .diff-line-no:nth-child(3) {
+  border-left: 1px solid rgba(28, 42, 57, 0.12);
+}
+
+.diff-code {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: transparent;
+  color: #17212b;
+  border-radius: 0;
+}
+
+.diff-context .diff-code {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.diff-added .diff-right,
+.diff-added .diff-line-no:nth-child(3),
+.diff-added .diff-line-no:nth-child(4) {
+  background: rgba(42, 139, 90, 0.12);
+}
+
+.diff-removed .diff-left,
+.diff-removed .diff-line-no:nth-child(1),
+.diff-removed .diff-line-no:nth-child(2) {
+  background: rgba(196, 67, 67, 0.13);
+}
+
 .actions {
   display: flex;
   gap: 0.6rem;

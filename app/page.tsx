@@ -10,6 +10,10 @@ type AgentRunRecord = {
   error?: string;
   finalSummary?: string;
   mergeRequestUrl?: string;
+  repo?: {
+    techStack: string[];
+    testingGuidance: string[];
+  };
   proposal?: {
     requirements: string[];
     assumptions: string[];
@@ -20,6 +24,19 @@ type AgentRunRecord = {
     prTitle: string;
   };
   diffPreview?: string;
+};
+
+type DiffRow = {
+  kind: "context" | "added" | "removed";
+  leftNumber?: number;
+  rightNumber?: number;
+  leftText: string;
+  rightText: string;
+};
+
+type DiffFile = {
+  path: string;
+  rows: DiffRow[];
 };
 
 export default function Home() {
@@ -34,6 +51,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   const canApprove = useMemo(() => run?.status === "awaiting_approval", [run?.status]);
+  const parsedDiff = useMemo(() => parseUnifiedDiff(run?.diffPreview ?? ""), [run?.diffPreview]);
 
   async function onStart(event: FormEvent) {
     event.preventDefault();
@@ -104,7 +122,7 @@ export default function Home() {
         <h1>Ticket-to-PR workflow with HITL approvals</h1>
         <p>
           LangGraph orchestration + Gemini reasoning + Jira/GitLab integration. Run in dry mode first, inspect
-          proposal and diff, then approve for code application and PR creation.
+          proposal and stack-aware tests, then approve for code application and PR creation.
         </p>
       </section>
 
@@ -117,7 +135,7 @@ export default function Home() {
 
           <label>
             Tracker
-            <select value={tracker} onChange={(event) => setTracker(event.target.value as "jira" | "gitlab")}> 
+            <select value={tracker} onChange={(event) => setTracker(event.target.value as "jira" | "gitlab")}>
               <option value="jira">Jira</option>
               <option value="gitlab">GitLab</option>
             </select>
@@ -163,6 +181,15 @@ export default function Home() {
             </div>
           ) : null}
 
+          {run.repo ? (
+            <>
+              <h3>Detected Tech Stack</h3>
+              <ul>{run.repo.techStack.map((item) => <li key={item}>{item}</li>)}</ul>
+              <h3>Testing Guidance</h3>
+              <ul>{run.repo.testingGuidance.map((item) => <li key={item}>{item}</li>)}</ul>
+            </>
+          ) : null}
+
           {run.proposal ? (
             <>
               <h3>Requirements</h3>
@@ -171,12 +198,44 @@ export default function Home() {
               <h3>Implementation Plan</h3>
               <ul>{run.proposal.implementationPlan.map((item) => <li key={item}>{item}</li>)}</ul>
 
+              <h3>Tests And Grounding</h3>
+              <ul>{run.proposal.testsAndGrounding.map((item) => <li key={item}>{item}</li>)}</ul>
+
               <h3>Proposed Edits</h3>
-              <ul>{run.proposal.proposedEdits.map((item) => <li key={item.path}><code>{item.path}</code> - {item.summary}</li>)}</ul>
+              <ul>
+                {run.proposal.proposedEdits.map((item) => (
+                  <li key={item.path}>
+                    <code>{item.path}</code> - {item.summary}
+                  </li>
+                ))}
+              </ul>
             </>
           ) : null}
 
-          {run.diffPreview ? (
+          {parsedDiff.length > 0 ? (
+            <>
+              <h3>Diff Preview (Side by Side)</h3>
+              <div className="diff-list">
+                {parsedDiff.map((file) => (
+                  <section className="diff-file" key={file.path}>
+                    <div className="diff-file-header">
+                      <code>{file.path}</code>
+                    </div>
+                    <div className="diff-grid">
+                      {file.rows.map((row, index) => (
+                        <div className={`diff-row diff-${row.kind}`} key={`${file.path}-${index}`}>
+                          <div className="diff-line-no">{row.leftNumber ?? ""}</div>
+                          <pre className="diff-code diff-left">{row.leftText}</pre>
+                          <div className="diff-line-no">{row.rightNumber ?? ""}</div>
+                          <pre className="diff-code diff-right">{row.rightText}</pre>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </>
+          ) : run.diffPreview ? (
             <>
               <h3>Diff Preview</h3>
               <pre>{run.diffPreview}</pre>
@@ -216,4 +275,89 @@ export default function Home() {
       ) : null}
     </main>
   );
+}
+
+function parseUnifiedDiff(diffText: string): DiffFile[] {
+  if (!diffText.trim()) {
+    return [];
+  }
+
+  const lines = diffText.split("\n");
+  const files: DiffFile[] = [];
+
+  let currentFile: DiffFile | null = null;
+  let leftLine = 0;
+  let rightLine = 0;
+
+  for (const line of lines) {
+    if (line.startsWith("Index: ")) {
+      const path = line.slice("Index: ".length).trim();
+      currentFile = { path, rows: [] };
+      files.push(currentFile);
+      continue;
+    }
+
+    if (line.startsWith("@@ ")) {
+      const match = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (match) {
+        leftLine = Number.parseInt(match[1], 10);
+        rightLine = Number.parseInt(match[2], 10);
+      }
+      continue;
+    }
+
+    if (!currentFile) {
+      continue;
+    }
+
+    if (
+      line.startsWith("===") ||
+      line.startsWith("--- ") ||
+      line.startsWith("+++ ") ||
+      line.length === 0
+    ) {
+      continue;
+    }
+
+    const marker = line[0];
+    const text = line.slice(1);
+
+    if (marker === "-") {
+      currentFile.rows.push({
+        kind: "removed",
+        leftNumber: leftLine,
+        rightNumber: undefined,
+        leftText: text,
+        rightText: "",
+      });
+      leftLine += 1;
+      continue;
+    }
+
+    if (marker === "+") {
+      currentFile.rows.push({
+        kind: "added",
+        leftNumber: undefined,
+        rightNumber: rightLine,
+        leftText: "",
+        rightText: text,
+      });
+      rightLine += 1;
+      continue;
+    }
+
+    if (marker === " ") {
+      currentFile.rows.push({
+        kind: "context",
+        leftNumber: leftLine,
+        rightNumber: rightLine,
+        leftText: text,
+        rightText: text,
+      });
+      leftLine += 1;
+      rightLine += 1;
+    }
+  }
+
+  return files.filter((file) => file.rows.length > 0);
 }

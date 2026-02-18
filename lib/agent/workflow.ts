@@ -24,6 +24,10 @@ import type {
   TrackerTask,
 } from "./types";
 
+const MAX_EDIT_ATTEMPTS = 2;
+const UNIT_TEST_RETRY_FEEDBACK =
+  "Revise the edits to include unit tests aligned to the detected stack and changed behavior.";
+
 type WorkflowState = {
   runId: string;
   input: AgentRunInput;
@@ -89,21 +93,15 @@ const graph = new StateGraph(graphState)
       throw new Error("Missing context for drafting changes");
     }
 
-    const draftPrompt = await hydrateDraftPrompt({
-      repoPath: state.input.repoPath,
-      task: state.task,
-      repo: state.repo,
-      proposal: state.proposal,
+    const editPayload = await generateEditsWithUnitTestGate({
+      runLike: {
+        input: state.input,
+        task: state.task,
+        repo: state.repo,
+        proposal: state.proposal,
+      },
       feedback: "Initial implementation draft for human review.",
     });
-
-    const raw = await generateText(draftPrompt);
-    const editPayload = parseJsonObject<{
-      edits: Array<{ path: string; content: string; rationale: string }>;
-      summary: string;
-      commitTitle?: string;
-      prDescription?: string;
-    }>(raw);
 
     const stagedEdits = editPayload.edits;
     const diffPreview = await buildPreviewDiff(state.input.repoPath, stagedEdits);
@@ -247,7 +245,13 @@ async function resolveFinalEdits(
   commitTitle?: string;
   prDescription?: string;
 }> {
-  if (run.stagedEdits && run.stagedEdits.length > 0 && (!feedback || feedback.trim().length === 0)) {
+  if (
+    run.stagedEdits &&
+    run.stagedEdits.length > 0 &&
+    run.repo &&
+    (!feedback || feedback.trim().length === 0) &&
+    passesUnitTestGate(run.stagedEdits, run.repo)
+  ) {
     return {
       edits: run.stagedEdits,
       summary: "Applied previously staged draft edits after approval.",
@@ -256,14 +260,65 @@ async function resolveFinalEdits(
     };
   }
 
-  const prompt = await hydrateEditPromptWithCurrentFiles(run, feedback);
-  const raw = await generateText(prompt);
-  return parseJsonObject<{
+  return generateEditsWithUnitTestGate({
+    runLike: run,
+    feedback: feedback ?? "No additional feedback",
+  });
+}
+
+async function generateEditsWithUnitTestGate(params: {
+  runLike: Pick<AgentRunRecord, "input" | "task" | "repo" | "proposal">;
+  feedback: string;
+}): Promise<{
+  edits: Array<{ path: string; content: string; rationale: string }>;
+  summary: string;
+  commitTitle?: string;
+  prDescription?: string;
+}> {
+  const { runLike } = params;
+  if (!runLike.task || !runLike.repo || !runLike.proposal) {
+    throw new Error("Run is missing proposal context.");
+  }
+
+  let feedback = params.feedback;
+  let lastPayload: {
     edits: Array<{ path: string; content: string; rationale: string }>;
     summary: string;
     commitTitle?: string;
     prDescription?: string;
-  }>(raw);
+  } | null = null;
+
+  for (let attempt = 1; attempt <= MAX_EDIT_ATTEMPTS; attempt += 1) {
+    const prompt = await hydrateDraftPrompt({
+      repoPath: runLike.input.repoPath,
+      task: runLike.task,
+      repo: runLike.repo,
+      proposal: runLike.proposal,
+      feedback,
+    });
+    const raw = await generateText(prompt);
+    const payload = parseJsonObject<{
+      edits: Array<{ path: string; content: string; rationale: string }>;
+      summary: string;
+      commitTitle?: string;
+      prDescription?: string;
+    }>(raw);
+
+    lastPayload = payload;
+    if (passesUnitTestGate(payload.edits, runLike.repo)) {
+      return payload;
+    }
+
+    feedback = `${feedback}\n${UNIT_TEST_RETRY_FEEDBACK}`;
+  }
+
+  if (!lastPayload) {
+    throw new Error("Failed to generate edits.");
+  }
+
+  throw new Error(
+    "Generated edits did not include required unit-test updates for the detected tech stack. Please provide feedback and retry.",
+  );
 }
 
 function buildProposalPrompt(params: {
@@ -291,6 +346,7 @@ function buildProposalPrompt(params: {
       2,
     ),
     "Focus on robust implementation and grounding checks. Support polyglot repositories.",
+    "Detect tech stack/frameworks from repository signals and plan test updates per affected stack.",
     `Task id: ${params.task.id}`,
     `Task title: ${params.task.title}`,
     `Task description: ${params.task.description}`,
@@ -302,7 +358,10 @@ function buildProposalPrompt(params: {
     params.feedbackBias,
     "Grounding baseline checks:",
     params.grounding.map((item, index) => `${index + 1}. ${item}`).join("\n"),
+    "Stack-aware testing guidance:",
+    params.repo.testingGuidance.map((item, index) => `${index + 1}. ${item}`).join("\n"),
     "Respect requirement clarity first. Keep assumptions explicit.",
+    "The plan must include unit-test work before code is considered complete.",
   ].join("\n\n");
 }
 
@@ -335,11 +394,16 @@ function buildEditPrompt(params: {
     "- Edit only files listed in proposal.proposedEdits unless absolutely necessary.",
     "- Provide complete file content for each edited file.",
     "- Keep security and backwards compatibility in mind.",
+    "- Detect and follow repository tech stack/framework test conventions.",
+    "- Add or update unit tests for every changed behavior before marking work complete.",
+    "- Include test file edits in the returned edits array.",
     `Task: ${params.task.id} - ${params.task.title}`,
     `Task details: ${params.task.description}`,
     `Proposal: ${JSON.stringify(params.proposal, null, 2)}`,
     `Reviewer feedback: ${params.feedback ?? "No additional feedback"}`,
     `Repository files sample: ${JSON.stringify(params.repo.sampleFiles.slice(0, 120), null, 2)}`,
+    `Detected stack: ${params.repo.techStack.join(", ")}`,
+    `Testing guidance: ${params.repo.testingGuidance.join(" | ")}`,
     "For each proposed file, use the latest existing file content below:",
   ].join("\n\n");
 }
@@ -408,4 +472,68 @@ async function buildPreviewDiff(repoPath: string, edits: DraftEdit[]): Promise<s
   }
 
   return chunks.join("\n");
+}
+
+function passesUnitTestGate(edits: DraftEdit[], repo: Awaited<ReturnType<typeof scanRepository>>): boolean {
+  if (edits.length === 0) {
+    return false;
+  }
+
+  const sourceEdits = edits.filter((edit) => isSourceLikePath(edit.path));
+  if (sourceEdits.length === 0) {
+    return true;
+  }
+
+  const requiresTests = Boolean(
+    repo.languageSummary.TypeScript ||
+      repo.languageSummary.JavaScript ||
+      repo.languageSummary.Java ||
+      repo.languageSummary.Kotlin ||
+      repo.languageSummary.Python ||
+      repo.languageSummary.Go,
+  );
+
+  if (!requiresTests) {
+    return true;
+  }
+
+  return edits.some((edit) => isTestLikePath(edit.path));
+}
+
+function isSourceLikePath(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  const sourceExtensions = [
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".java",
+    ".kt",
+    ".py",
+    ".go",
+    ".cs",
+  ];
+
+  return sourceExtensions.some((extension) => lower.endsWith(extension)) && !isTestLikePath(filePath);
+}
+
+function isTestLikePath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  const lower = normalized.toLowerCase();
+  const baseName = normalized.split("/").pop()?.toLowerCase() ?? "";
+
+  return (
+    lower.includes("/__tests__/") ||
+    lower.includes("/tests/") ||
+    lower.includes("/test/") ||
+    baseName.endsWith(".test.ts") ||
+    baseName.endsWith(".test.tsx") ||
+    baseName.endsWith(".test.js") ||
+    baseName.endsWith(".spec.ts") ||
+    baseName.endsWith(".spec.js") ||
+    baseName.endsWith("_test.go") ||
+    baseName.startsWith("test_") && baseName.endsWith(".py") ||
+    baseName.endsWith("test.py") ||
+    baseName.endsWith("test.java")
+  );
 }

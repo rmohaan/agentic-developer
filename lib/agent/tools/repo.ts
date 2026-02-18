@@ -37,13 +37,79 @@ export async function scanRepository(repoPath: string): Promise<RepoSnapshot> {
   }
 
   const entries = await fs.readdir(repoPath);
+  const techStack = detectTechStack(files, languageSummary);
+  const testingGuidance = buildTestingGuidance(techStack, languageSummary);
 
   return {
     fileCount: files.length,
     topLevelEntries: entries.slice(0, 25),
     languageSummary,
     sampleFiles: files.slice(0, 80),
+    techStack,
+    testingGuidance,
   };
+}
+
+function detectTechStack(files: string[], languageSummary: Record<string, number>): string[] {
+  const set = new Set<string>();
+  const normalized = new Set(files.map((file) => file.replace(/\\/g, "/")));
+
+  if (languageSummary.TypeScript || normalized.has("tsconfig.json")) {
+    set.add("TypeScript");
+  }
+  if (languageSummary.JavaScript || normalized.has("package.json")) {
+    set.add("JavaScript/Node.js");
+  }
+  if (normalized.has("next.config.js") || normalized.has("next.config.ts")) {
+    set.add("Next.js");
+  }
+  if (normalized.has("pom.xml") || normalized.has("mvnw")) {
+    set.add("Java (Maven)");
+  }
+  if (normalized.has("build.gradle") || normalized.has("build.gradle.kts") || normalized.has("gradlew")) {
+    set.add("Java/Kotlin (Gradle)");
+  }
+  if (normalized.has("pyproject.toml") || normalized.has("requirements.txt") || languageSummary.Python) {
+    set.add("Python");
+  }
+  if (normalized.has("go.mod") || languageSummary.Go) {
+    set.add("Go");
+  }
+  if (normalized.has("Cargo.toml") || languageSummary.Rust) {
+    set.add("Rust");
+  }
+
+  if (set.size === 0) {
+    set.add("Generic polyglot repository");
+  }
+
+  return Array.from(set);
+}
+
+function buildTestingGuidance(techStack: string[], languageSummary: Record<string, number>): string[] {
+  const guidance: string[] = [];
+  const hasTsJs = Boolean(languageSummary.TypeScript || languageSummary.JavaScript);
+  const hasPython = Boolean(languageSummary.Python);
+  const hasGo = Boolean(languageSummary.Go);
+  const hasJava = Boolean(languageSummary.Java || languageSummary.Kotlin);
+
+  if (hasTsJs || techStack.includes("Next.js")) {
+    guidance.push("Add or update unit tests using Jest/Vitest and framework-specific test utilities.");
+  }
+  if (hasPython) {
+    guidance.push("Add or update pytest unit tests for changed modules.");
+  }
+  if (hasGo) {
+    guidance.push("Add or update *_test.go files for changed packages.");
+  }
+  if (hasJava) {
+    guidance.push("Add or update JUnit tests in src/test/java (or equivalent test source set).");
+  }
+  if (guidance.length === 0) {
+    guidance.push("Add/update tests using the repository's existing test conventions.");
+  }
+
+  return guidance;
 }
 
 async function listRepositoryFiles(repoPath: string): Promise<string[]> {

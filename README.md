@@ -8,9 +8,10 @@ This project is a starting point for a **developer agent** that takes a Jira/Git
 2. Scans the repository to understand structure and language mix.
 3. Creates/switches to a `codex/<task>` branch (unless in dry-run mode).
 4. Uses Gemini + LangGraph reasoning to produce a concrete implementation proposal.
-5. Shows proposal to human reviewer (HITL).
-6. On approval, generates file edits, applies changes, and optionally commits/pushes/creates GitLab MR.
-7. Stores reviewer feedback to improve future runs.
+5. Generates draft edits with stack-aware unit-test expectations and quality gate checks.
+6. Shows proposal plus side-by-side diff to human reviewer (HITL).
+7. On approval, applies changes and optionally commits/pushes/creates GitLab MR.
+8. Stores reviewer feedback to improve future runs.
 
 ## Model choice (Gemini)
 
@@ -35,6 +36,7 @@ LangGraph nodes in `lib/agent/workflow.ts`:
 3. `loadFeedback`: load past HITL feedback memory
 4. `prepareBranch`: create/checkout `codex/*` branch
 5. `propose`: generate implementation + test/grounding plan
+6. `draftChanges`: generate staged edits and enforce unit-test presence for detected stacks
 
 Approval endpoint then runs finalize stage:
 - generate concrete file edits
@@ -112,6 +114,14 @@ The agent includes grounding checklist generation in `lib/agent/tools/grounding.
 - Java/Kotlin: gradle/maven tests
 
 Use this as the baseline; customize per repo CI contract.
+
+## Side-by-side diff review
+
+The web UI renders unified diff previews as a side-by-side view with line numbers:
+- left pane: original content
+- right pane: proposed content
+
+This is shown before approval so reviewers can inspect changes clearly.
 
 ## Reinforcement from human feedback
 

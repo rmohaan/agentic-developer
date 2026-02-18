@@ -23,6 +23,8 @@ export type RepoSnapshot = {
   topLevelEntries: string[];
   languageSummary: Record<string, number>;
   sampleFiles: string[];
+  techStack: string[];
+  testingGuidance: string[];
 };
 
 export type ProposedEdit = {
