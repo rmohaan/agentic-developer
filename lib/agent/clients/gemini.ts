@@ -36,5 +36,59 @@ export function parseJsonObject<T>(raw: string): T {
   }
 
   const jsonText = raw.slice(firstBrace, lastBrace + 1);
-  return JSON.parse(jsonText) as T;
+  try {
+    return JSON.parse(jsonText) as T;
+  } catch {
+    const repaired = repairInvalidStringEscapes(jsonText);
+    return JSON.parse(repaired) as T;
+  }
+}
+
+function repairInvalidStringEscapes(input: string): string {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+
+    if (!inString) {
+      output += char;
+      if (char === "\"") {
+        inString = true;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      output += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\"") {
+      output += char;
+      inString = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      const next = input[index + 1] ?? "";
+      const isSimpleEscape = "\"\\/bfnrt".includes(next);
+      const isUnicodeEscape = next === "u" && /^[0-9a-fA-F]{4}$/.test(input.slice(index + 2, index + 6));
+
+      if (isSimpleEscape || isUnicodeEscape) {
+        output += "\\";
+        escaped = true;
+      } else {
+        // Keep the literal backslash by escaping it.
+        output += "\\\\";
+      }
+      continue;
+    }
+
+    output += char;
+  }
+
+  return output;
 }
