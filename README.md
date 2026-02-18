@@ -44,6 +44,19 @@ Approval endpoint then runs finalize stage:
 - produce diff preview
 - optionally commit/push/open GitLab merge request
 
+## LLM instruction bundles
+
+Stack-aware coding/testing instructions are stored in:
+- `instructions/llm/common.md`
+- `instructions/llm/java.md`
+- `instructions/llm/javascript.md`
+- `instructions/llm/typescript.md`
+- `instructions/llm/nodejs.md`
+- `instructions/llm/nextjs.md`
+- `instructions/llm/python.md`
+
+These files are dynamically loaded based on detected stack and injected into model prompts during planning and code/test generation.
+
 ## API endpoints
 
 - `POST /api/agent/run`

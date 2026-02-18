@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createPatch } from "diff";
 import { buildGroundingChecklist } from "./tools/grounding";
 import { generateText, parseJsonObject } from "./clients/gemini";
+import { loadLlmInstructionBundle } from "./instructions";
 import { createMergeRequest } from "./tools/gitlab";
 import {
   buildBranchName,
@@ -82,6 +83,7 @@ const graph = new StateGraph(graphState)
       feedbackBias: state.feedbackBias,
       targetBranch: state.input.targetBranch,
       grounding,
+      instructionBundle: await loadLlmInstructionBundle(state.repo),
     });
 
     const raw = await generateText(prompt);
@@ -281,6 +283,7 @@ async function generateEditsWithUnitTestGate(params: {
   }
 
   let feedback = params.feedback;
+  const instructionBundle = await loadLlmInstructionBundle(runLike.repo);
   let lastPayload: {
     edits: Array<{ path: string; content: string; rationale: string }>;
     summary: string;
@@ -294,6 +297,7 @@ async function generateEditsWithUnitTestGate(params: {
       task: runLike.task,
       repo: runLike.repo,
       proposal: runLike.proposal,
+      instructionBundle,
       feedback,
     });
     const raw = await generateText(prompt);
@@ -327,6 +331,7 @@ function buildProposalPrompt(params: {
   feedbackBias: string;
   targetBranch: string;
   grounding: string[];
+  instructionBundle: string;
 }): string {
   return [
     "You are a senior software engineer planning implementation from a tracker ticket.",
@@ -360,6 +365,8 @@ function buildProposalPrompt(params: {
     params.grounding.map((item, index) => `${index + 1}. ${item}`).join("\n"),
     "Stack-aware testing guidance:",
     params.repo.testingGuidance.map((item, index) => `${index + 1}. ${item}`).join("\n"),
+    "Instruction bundle:",
+    params.instructionBundle,
     "Respect requirement clarity first. Keep assumptions explicit.",
     "The plan must include unit-test work before code is considered complete.",
   ].join("\n\n");
@@ -369,6 +376,7 @@ function buildEditPrompt(params: {
   task: TrackerTask;
   repo: Awaited<ReturnType<typeof scanRepository>>;
   proposal: DesignProposal;
+  instructionBundle: string;
   feedback?: string;
 }): string {
   return [
@@ -404,6 +412,7 @@ function buildEditPrompt(params: {
     `Repository files sample: ${JSON.stringify(params.repo.sampleFiles.slice(0, 120), null, 2)}`,
     `Detected stack: ${params.repo.techStack.join(", ")}`,
     `Testing guidance: ${params.repo.testingGuidance.join(" | ")}`,
+    `Instruction bundle:\n${params.instructionBundle}`,
     "For each proposed file, use the latest existing file content below:",
   ].join("\n\n");
 }
@@ -413,10 +422,12 @@ export async function hydrateEditPromptWithCurrentFiles(run: AgentRunRecord, fee
     throw new Error("Run is not ready for file hydration");
   }
 
+  const instructionBundle = await loadLlmInstructionBundle(run.repo);
   const basePrompt = buildEditPrompt({
     task: run.task,
     repo: run.repo,
     proposal: run.proposal,
+    instructionBundle,
     feedback,
   });
 
@@ -439,12 +450,15 @@ async function hydrateDraftPrompt(params: {
   task: TrackerTask;
   repo: Awaited<ReturnType<typeof scanRepository>>;
   proposal: DesignProposal;
+  instructionBundle?: string;
   feedback?: string;
 }): Promise<string> {
+  const instructionBundle = params.instructionBundle ?? (await loadLlmInstructionBundle(params.repo));
   const basePrompt = buildEditPrompt({
     task: params.task,
     repo: params.repo,
     proposal: params.proposal,
+    instructionBundle,
     feedback: params.feedback,
   });
 
