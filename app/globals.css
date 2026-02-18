@@ -161,6 +161,47 @@ pre {
   padding-top: 0.8rem;
 }
 
+.coverage-summary {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.7rem;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.coverage-summary.ok {
+  border-color: rgba(42, 139, 90, 0.5);
+  background: rgba(42, 139, 90, 0.08);
+}
+
+.coverage-summary.bad {
+  border-color: rgba(196, 67, 67, 0.5);
+  background: rgba(196, 67, 67, 0.1);
+}
+
+.coverage-table-wrap {
+  overflow: auto;
+  margin-top: 0.6rem;
+}
+
+.coverage-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 560px;
+}
+
+.coverage-table th,
+.coverage-table td {
+  border: 1px solid var(--line);
+  padding: 0.5rem 0.55rem;
+  text-align: left;
+}
+
+.coverage-table thead th {
+  background: rgba(31, 122, 140, 0.1);
+}
+
 .diff-list {
   display: grid;
   gap: 0.8rem;

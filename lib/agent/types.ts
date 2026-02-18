@@ -49,6 +49,24 @@ export type DesignProposal = {
   prTitle: string;
 };
 
+export type FileCoverage = {
+  path: string;
+  coveredLines: number;
+  totalLines: number;
+  lineCoveragePercent: number | null;
+};
+
+export type TestExecutionReport = {
+  executed: boolean;
+  success: boolean;
+  command?: string;
+  overallLineCoveragePercent: number | null;
+  fileCoverage: FileCoverage[];
+  notes: string[];
+  stdoutSnippet?: string;
+  stderrSnippet?: string;
+};
+
 export type AgentRunRecord = {
   runId: string;
   createdAt: string;
@@ -60,6 +78,7 @@ export type AgentRunRecord = {
   stagedEdits?: DraftEdit[];
   branchName?: string;
   diffPreview?: string;
+  testReport?: TestExecutionReport;
   feedbackHistory: string[];
   finalSummary?: string;
   mergeRequestUrl?: string;

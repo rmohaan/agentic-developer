@@ -4,6 +4,7 @@ import { createPatch } from "diff";
 import { buildGroundingChecklist } from "./tools/grounding";
 import { generateText, parseJsonObject } from "./clients/gemini";
 import { loadLlmInstructionBundle } from "./instructions";
+import { runTestsAndCollectCoverage } from "./tools/testRunner";
 import { createMergeRequest } from "./tools/gitlab";
 import {
   buildBranchName,
@@ -22,6 +23,7 @@ import type {
   DesignProposal,
   DraftEdit,
   FinalizeResult,
+  TestExecutionReport,
   TrackerTask,
 } from "./types";
 
@@ -39,6 +41,7 @@ type WorkflowState = {
   proposal?: DesignProposal;
   stagedEdits?: DraftEdit[];
   diffPreview?: string;
+  testReport?: TestExecutionReport;
 };
 
 const graphState = Annotation.Root({
@@ -51,6 +54,7 @@ const graphState = Annotation.Root({
   proposal: Annotation<DesignProposal | undefined>,
   stagedEdits: Annotation<DraftEdit[] | undefined>,
   diffPreview: Annotation<string | undefined>,
+  testReport: Annotation<TestExecutionReport | undefined>,
 });
 
 const graph = new StateGraph(graphState)
@@ -107,7 +111,12 @@ const graph = new StateGraph(graphState)
 
     const stagedEdits = editPayload.edits;
     const diffPreview = await buildPreviewDiff(state.input.repoPath, stagedEdits);
-    return { stagedEdits, diffPreview };
+    const testReport = await runTestsAndCollectCoverage({
+      repoPath: state.input.repoPath,
+      repo: state.repo,
+      edits: stagedEdits,
+    });
+    return { stagedEdits, diffPreview, testReport };
   })
   .addEdge(START, "loadTask")
   .addEdge("loadTask", "scanRepo")
@@ -138,6 +147,7 @@ export async function startAgentRun(input: AgentRunInput): Promise<AgentRunRecor
       branchName: result.branchName,
       stagedEdits: result.stagedEdits,
       diffPreview: result.diffPreview,
+      testReport: result.testReport,
     });
     return record;
   } catch (error) {

@@ -24,6 +24,21 @@ type AgentRunRecord = {
     prTitle: string;
   };
   diffPreview?: string;
+  testReport?: {
+    executed: boolean;
+    success: boolean;
+    command?: string;
+    overallLineCoveragePercent: number | null;
+    notes: string[];
+    stdoutSnippet?: string;
+    stderrSnippet?: string;
+    fileCoverage: Array<{
+      path: string;
+      coveredLines: number;
+      totalLines: number;
+      lineCoveragePercent: number | null;
+    }>;
+  };
 };
 
 type DiffRow = {
@@ -209,6 +224,67 @@ export default function Home() {
                   </li>
                 ))}
               </ul>
+            </>
+          ) : null}
+
+          {run.testReport ? (
+            <>
+              <h3>Test And Coverage Gate</h3>
+              <div className={`coverage-summary ${run.testReport.success ? "ok" : "bad"}`}>
+                <div>
+                  <strong>Status:</strong>{" "}
+                  {run.testReport.executed
+                    ? run.testReport.success
+                      ? "Passed"
+                      : "Failed"
+                    : "Not Executed"}
+                </div>
+                <div>
+                  <strong>Overall Coverage (Changed Files):</strong>{" "}
+                  {run.testReport.overallLineCoveragePercent === null
+                    ? "n/a"
+                    : `${run.testReport.overallLineCoveragePercent}%`}
+                </div>
+                {run.testReport.command ? (
+                  <div>
+                    <strong>Command:</strong> <code>{run.testReport.command}</code>
+                  </div>
+                ) : null}
+              </div>
+
+              {run.testReport.notes.length > 0 ? (
+                <ul>{run.testReport.notes.map((item) => <li key={item}>{item}</li>)}</ul>
+              ) : null}
+
+              <div className="coverage-table-wrap">
+                <table className="coverage-table">
+                  <thead>
+                    <tr>
+                      <th>File</th>
+                      <th>Covered Lines</th>
+                      <th>Total Lines</th>
+                      <th>Coverage %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {run.testReport.fileCoverage.map((entry) => (
+                      <tr key={entry.path}>
+                        <td><code>{entry.path}</code></td>
+                        <td>{entry.coveredLines}</td>
+                        <td>{entry.totalLines}</td>
+                        <td>{entry.lineCoveragePercent === null ? "n/a" : `${entry.lineCoveragePercent}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {run.testReport.stderrSnippet ? (
+                <>
+                  <h3>Test stderr</h3>
+                  <pre>{run.testReport.stderrSnippet}</pre>
+                </>
+              ) : null}
             </>
           ) : null}
 

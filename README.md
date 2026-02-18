@@ -37,6 +37,7 @@ LangGraph nodes in `lib/agent/workflow.ts`:
 4. `prepareBranch`: create/checkout `codex/*` branch
 5. `propose`: generate implementation + test/grounding plan
 6. `draftChanges`: generate staged edits and enforce unit-test presence for detected stacks
+7. `testAndCoverageGate`: temporarily apply staged edits, run tests with coverage, restore working copy, and return per-file coverage
 
 Approval endpoint then runs finalize stage:
 - generate concrete file edits
@@ -135,6 +136,26 @@ The web UI renders unified diff previews as a side-by-side view with line number
 - right pane: proposed content
 
 This is shown before approval so reviewers can inspect changes clearly.
+
+## Test execution and per-file coverage in review
+
+Before approval, the agent now executes a test/coverage gate on staged edits:
+
+1. Saves original content of edited files.
+2. Applies staged edits to the working copy.
+3. Runs repository test coverage command (currently implemented for JS/TS Node repos):
+   - `npm|pnpm|yarn run test:coverage` if available
+   - otherwise `run coverage`
+   - otherwise `run test -- --coverage`
+4. Parses `coverage/lcov.info` and maps line coverage to each edited file.
+5. Restores original file content so reviewer still approves before final application.
+
+The review UI shows:
+- pass/fail status
+- executed command
+- overall line coverage for changed files
+- per-file coverage numbers
+- stderr snippet when tests fail
 
 ## Reinforcement from human feedback
 
