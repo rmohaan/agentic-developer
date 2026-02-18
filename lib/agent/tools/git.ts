@@ -25,7 +25,7 @@ export function buildBranchName(taskId: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "")
     .slice(0, 45);
-  return `codex/${slug || "task"}`;
+  return `feat/${slug || "task"}`;
 }
 
 export async function createOrCheckoutBranch(

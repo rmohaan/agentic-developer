@@ -2,7 +2,7 @@ export const agentConfig = {
   modelPlanner: process.env.GEMINI_MODEL_PLANNER ?? "gemini-3-pro-preview",
   modelFast: process.env.GEMINI_MODEL_FAST ?? "gemini-2.5-flash",
   googleCloudProject: process.env.GOOGLE_CLOUD_PROJECT,
-  googleCloudLocation: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1",
+  googleCloudLocation: process.env.GOOGLE_CLOUD_LOCATION ?? "asia-south1",
   jiraBaseUrl: process.env.JIRA_BASE_URL,
   jiraEmail: process.env.JIRA_EMAIL,
   jiraApiToken: process.env.JIRA_API_TOKEN,

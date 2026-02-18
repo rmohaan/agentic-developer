@@ -6,7 +6,7 @@ This project is a starting point for a **developer agent** that takes a Jira/Git
 
 1. Reads a Jira task or GitLab issue by ID.
 2. Scans the repository to understand structure and language mix.
-3. Creates/switches to a `codex/<task>` branch (unless in dry-run mode).
+3. Creates/switches to a `feat/<task>` branch (unless in dry-run mode).
 4. Uses Gemini + LangGraph reasoning to produce a concrete implementation proposal.
 5. Generates draft edits with stack-aware unit-test expectations and quality gate checks.
 6. Shows proposal plus side-by-side diff to human reviewer (HITL).
