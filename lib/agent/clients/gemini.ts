@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { jsonrepair } from "jsonrepair";
 import { agentConfig } from "../config";
 
 let cachedClient: GoogleGenAI | null = null;
@@ -45,8 +46,13 @@ export function parseJsonObject<T>(raw: string): T {
       const repaired = repairInvalidStringEscapes(jsonText);
       return JSON.parse(repaired) as T;
     } catch {
-      const repaired = sanitizeControlCharsInStrings(repairInvalidStringEscapes(jsonText));
-      return JSON.parse(repaired) as T;
+      try {
+        const repaired = sanitizeControlCharsInStrings(repairInvalidStringEscapes(jsonText));
+        return JSON.parse(repaired) as T;
+      } catch {
+        const repaired = jsonrepair(jsonText);
+        return JSON.parse(repaired) as T;
+      }
     }
   }
 }
