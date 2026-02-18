@@ -23,19 +23,21 @@ export async function generateText(prompt: string, useFastModel = false): Promis
   const result = await ai.models.generateContent({
     model,
     contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      temperature: 0.1,
+    },
   });
 
   return result.text ?? "";
 }
 
 export function parseJsonObject<T>(raw: string): T {
-  const firstBrace = raw.indexOf("{");
-  const lastBrace = raw.lastIndexOf("}");
-  if (firstBrace < 0 || lastBrace < 0 || lastBrace <= firstBrace) {
+  const jsonText = extractBalancedJsonObject(raw);
+  if (!jsonText) {
     throw new Error("Model response did not contain JSON object");
   }
 
-  const jsonText = raw.slice(firstBrace, lastBrace + 1);
   try {
     return JSON.parse(jsonText) as T;
   } catch {
@@ -91,4 +93,53 @@ function repairInvalidStringEscapes(input: string): string {
   }
 
   return output;
+}
+
+function extractBalancedJsonObject(raw: string): string | null {
+  const start = raw.indexOf("{");
+  if (start < 0) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < raw.length; index += 1) {
+    const char = raw[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return raw.slice(start, index + 1);
+      }
+    }
+  }
+
+  return null;
 }
